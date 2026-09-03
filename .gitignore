@@ -1,1 +1,25 @@
 /docs
+
+# Local secrets and machine-specific configuration
+.env
+.env.*
+!.env.example
+config.json
+
+# Study data and generated data products
+/data/raw/
+/data/processed/
+/data/demo.csv
+
+# Local Python environment and caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+build/
+dist/
+*.egg-info/
+
+# OS, Office, and editor artifacts
+.DS_Store
+~$*
