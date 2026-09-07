@@ -23,3 +23,7 @@ dist/
 # OS, Office, and editor artifacts
 .DS_Store
 ~$*
+
+# Patient report graphics and report metadata
+/data/reports/
+.Rproj.user
