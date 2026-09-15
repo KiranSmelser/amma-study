@@ -4,7 +4,7 @@ import csv
 import json
 from pathlib import Path
 
-from amma_pipeline.pipeline import run_local_pipeline
+from amma_pipeline.pipeline import _build_processed_run
 
 
 def _read_csv(path: Path) -> list[dict[str, str]]:
@@ -12,16 +12,14 @@ def _read_csv(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(handle))
 
 
-def test_local_pipeline_preserves_seizure_multiplicity_and_publishes_latest(
+def test_processed_run_builder_preserves_seizure_multiplicity(
     tmp_path: Path, synthetic_inputs
 ) -> None:
     workbook, demographics = synthetic_inputs()
-    output_root = tmp_path / "processed"
-
-    outcome = run_local_pipeline(
+    outcome = _build_processed_run(
         workbook_path=workbook,
         demographics_path=demographics,
-        output_root=output_root,
+        workspace_root=tmp_path / "workspace",
     )
 
     assert outcome.status == "passed"
@@ -56,25 +54,19 @@ def test_local_pipeline_preserves_seizure_multiplicity_and_publishes_latest(
     assert first_day["mood_ordinal"] == "1"
     assert first_day["stool_bristol_type"] == "1"
 
-    latest = json.loads((output_root / "latest.json").read_text(encoding="utf-8"))
-    assert latest["run_id"] == outcome.run_id
-    assert latest["relative_path"] == f"runs/{outcome.run_id}"
-
-
-def test_failed_qc_run_does_not_publish_latest(tmp_path: Path, synthetic_inputs) -> None:
+def test_processed_run_builder_materializes_failed_qc_run(
+    tmp_path: Path, synthetic_inputs
+) -> None:
     workbook, demographics = synthetic_inputs(seizure_diary_count=2)
-    output_root = tmp_path / "processed"
-
-    outcome = run_local_pipeline(
+    outcome = _build_processed_run(
         workbook_path=workbook,
         demographics_path=demographics,
-        output_root=output_root,
+        workspace_root=tmp_path / "workspace",
     )
 
     assert outcome.status == "failed"
     assert outcome.qc_error_count > 0
-    assert outcome.output_directory.parent.name == "failed"
-    assert not (output_root / "latest.json").exists()
+    assert outcome.output_directory.parent.name == "workspace"
     qc = _read_csv(outcome.output_directory / "qc_results.csv")
     reconciliation = next(
         row for row in qc if row["check_id"] == "diary_observation_reconciliation"
@@ -86,10 +78,10 @@ def test_manifest_contains_reproducibility_metadata(
     tmp_path: Path, synthetic_inputs
 ) -> None:
     workbook, demographics = synthetic_inputs()
-    outcome = run_local_pipeline(
+    outcome = _build_processed_run(
         workbook_path=workbook,
         demographics_path=demographics,
-        output_root=tmp_path / "processed",
+        workspace_root=tmp_path / "workspace",
     )
     manifest = json.loads(
         (outcome.output_directory / "run_manifest.json").read_text(encoding="utf-8")

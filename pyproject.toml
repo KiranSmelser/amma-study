@@ -4,11 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "amma-study-pipeline"
-version = "0.1.0"
+version = "0.4.0"
 description = "Reproducible preprocessing pipeline for Amma study exports"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "boxsdk>=10,<11",
     "openpyxl>=3.1,<4",
 ]
 

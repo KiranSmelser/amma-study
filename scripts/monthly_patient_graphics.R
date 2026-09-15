@@ -1,5 +1,5 @@
 #!/usr/bin/env Rscript
-# Usage: Rscript scripts/monthly_patient_graphics.R [processed_root] [output_root] [demographics_csv]
+# Usage: Rscript scripts/monthly_patient_graphics.R PROCESSED_RUN_DIR OUTPUT_ROOT DEMOGRAPHICS_CSV
 suppressPackageStartupMessages({
   library(ggplot2)
   library(dplyr)
@@ -107,14 +107,12 @@ make_patient_month <- function(days, counts, patient, month, palette, run_id, pa
   content
 }
 
-render_monthly_reports <- function(processed_root = "data/processed",
-                                   output_root = "data/reports/monthly",
-                                   demographics_csv = "data/demo.csv") {
-  latest <- fromJSON(file.path(processed_root, "latest.json"))
-  if (!identical(latest$status, "passed")) stop("latest.json must point to a passed run")
-  run_dir <- file.path(processed_root, latest$relative_path)
+render_monthly_reports <- function(run_dir, output_root, demographics_csv) {
   manifest <- fromJSON(file.path(run_dir, "run_manifest.json"))
   if (!identical(manifest$status, "passed")) stop("Source run did not pass QC")
+  source_run_id <- manifest$run_id
+  if (is.null(source_run_id) || length(source_run_id) != 1 || !nzchar(source_run_id))
+    stop("Source run manifest has no run_id")
   days <- read_table(file.path(run_dir, "participant_days.csv")) |>
     mutate(date = as.Date(date), sleep_quality = tolower(sleep_quality))
   events <- read_table(file.path(run_dir, "seizure_events.csv")) |>
@@ -137,16 +135,14 @@ render_monthly_reports <- function(processed_root = "data/processed",
   names_table <- demographics |>
     transmute(participant_id = recode(trimws(`Participant ID`), "SCN8A-0010" = "SCN8A-010"),
               patient_name = trimws(paste(coalesce(fname, ""), coalesce(lname, "")))) |>
-    filter(participant_id %in% days$participant_id) |>
-    mutate(file_name = gsub("[[:cntrl:]/\\\\:*?\"<>|]", "_", patient_name),
-           file_name = gsub("[[:space:]]+", "_", file_name),
-           file_name = sub("[. ]+$", "", file_name))
+    filter(participant_id %in% days$participant_id)
   if (anyDuplicated(names_table$participant_id)) stop("Duplicate participant IDs in demographics")
   if (any(!unique(days$participant_id) %in% names_table$participant_id) ||
-      any(names_table$patient_name == "") || any(names_table$file_name %in% c("", ".", "..")))
+      any(names_table$patient_name == ""))
     stop("Every report participant must have a usable name in demographics")
-  if (anyDuplicated(tolower(names_table$file_name)))
-    stop("Participant names produce duplicate filenames; disambiguate names in demographics")
+  if (any(grepl("[[:cntrl:]/\\\\:*?\"<>|]", names_table$participant_id)) ||
+      any(names_table$participant_id %in% c("", ".", "..")))
+    stop("Participant IDs must be safe for report paths")
   dir.create(output_root, recursive = TRUE, showWarnings = FALSE)
   # Exact hex values from the user-provided EPI4-Color_Palette.png.
   epi4_colors <- c("#00545E", "#A30234", "#677719", "#0076C0", "#7A5071",
@@ -166,28 +162,46 @@ render_monthly_reports <- function(processed_root = "data/processed",
   }
   palette <- assigned
   jobs <- days |> transmute(participant_id, month = format(date, "%Y-%m")) |> distinct()
+  report_run_dir <- file.path(output_root, source_run_id)
+  if (dir.exists(report_run_dir)) stop("Report output already exists for this source run")
+  dir.create(report_run_dir, recursive = TRUE, showWarnings = FALSE)
   index <- list()
   for (i in seq_len(nrow(jobs))) {
     patient <- jobs$participant_id[i]
     identity <- filter(names_table, participant_id == patient)
     month <- jobs$month[i]
-    destination <- file.path(output_root, latest$run_id, identity$file_name)
+    destination <- file.path(report_run_dir, patient)
     dir.create(destination, recursive = TRUE, showWarnings = FALSE)
-    path <- file.path(destination, paste0(identity$file_name, "_", month, ".pdf"))
-    plot <- make_patient_month(days, counts, patient, month, palette, latest$run_id, identity$patient_name)
+    path <- file.path(destination, paste0(patient, "_", month, ".pdf"))
+    plot <- make_patient_month(days, counts, patient, month, palette, source_run_id, identity$patient_name)
     ggsave(path, plot, width = 12, height = 10, device = grDevices::cairo_pdf, bg = "white", limitsize = TRUE)
-    index[[i]] <- tibble(participant_id = patient, patient_name = identity$patient_name, month, source_run = latest$run_id, file = path)
+    relative_file <- gsub("\\\\", "/", file.path(patient, basename(path)))
+    index[[i]] <- tibble(participant_id = patient, month, source_run = source_run_id,
+                         relative_file, file = path)
   }
   output_index <- bind_rows(index)
-  if (nrow(output_index)) write_csv(output_index, file.path(output_root, latest$run_id, "report_index.csv"))
+  if (!nrow(output_index)) stop("No patient-month reports were generated")
+  box_index <- output_index |> select(-file)
+  write_csv(box_index, file.path(report_run_dir, "report_index.csv"))
+  report_manifest <- list(
+    status = "passed",
+    report_schema_version = "1.0.0",
+    generated_utc = format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),
+    source_run_id = source_run_id,
+    source_pipeline_version = if (is.null(manifest$pipeline_version)) NA_character_ else manifest$pipeline_version,
+    report_count = nrow(box_index),
+    reports = box_index
+  )
+  write_json(report_manifest, file.path(report_run_dir, "report_manifest.json"),
+             pretty = TRUE, auto_unbox = TRUE, na = "null")
   message("Generated ", nrow(jobs), " patient-month graphics")
   invisible(output_index)
 }
 
 if (sys.nframe() == 0L) {
   args <- commandArgs(trailingOnly = TRUE)
+  if (length(args) != 3)
+    stop("Usage: monthly_patient_graphics.R PROCESSED_RUN_DIR OUTPUT_ROOT DEMOGRAPHICS_CSV")
   render_monthly_reports(
-    if (length(args) >= 1) args[1] else "data/processed",
-    if (length(args) >= 2) args[2] else "data/reports/monthly",
-    if (length(args) >= 3) args[3] else "data/demo.csv")
+    args[1], args[2], args[3])
 }

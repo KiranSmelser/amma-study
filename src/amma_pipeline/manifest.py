@@ -111,8 +111,11 @@ def build_manifest(
     table_row_counts: dict[str, int],
     qc_error_count: int,
     qc_warning_count: int,
+    output_files: dict[str, dict[str, Any]],
     config: PipelineConfig,
     repo_root: Path,
+    source_box: dict[str, Any] | None = None,
+    demographics_box: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the machine-readable provenance record for one run."""
 
@@ -122,19 +125,30 @@ def build_manifest(
         "created_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "source_extract_utc": source_extract_utc,
         "analysis_as_of_date": analysis_as_of_date,
-        "source_filename": workbook_path.name,
-        "source_size_bytes": workbook_path.stat().st_size,
+        "source_filename": (source_box or {}).get("name", workbook_path.name),
+        "source_size_bytes": (source_box or {}).get(
+            "size_bytes", workbook_path.stat().st_size
+        ),
         "source_sha256": source_sha256,
-        "demographics_filename": demographics_path.name,
-        "demographics_size_bytes": demographics_path.stat().st_size,
+        "demographics_filename": (demographics_box or {}).get(
+            "name", demographics_path.name
+        ),
+        "demographics_size_bytes": (demographics_box or {}).get(
+            "size_bytes", demographics_path.stat().st_size
+        ),
         "demographics_sha256": demographics_sha256,
         "run_fingerprint": run_fingerprint,
-        "source_box_file_id": None,
-        "source_box_version_id": None,
+        "source_box_file_id": (source_box or {}).get("file_id"),
+        "source_box_version_id": (source_box or {}).get("version_id"),
+        "source_box_sha1": (source_box or {}).get("box_sha1"),
+        "demographics_box_file_id": (demographics_box or {}).get("file_id"),
+        "demographics_box_version_id": (demographics_box or {}).get("version_id"),
+        "demographics_box_sha1": (demographics_box or {}).get("box_sha1"),
         "pipeline_version": __version__,
         "pipeline_git_commit": git_commit(repo_root),
         "schema_version": SCHEMA_VERSION,
         "table_row_counts": table_row_counts,
+        "output_files": output_files,
         "qc_error_count": qc_error_count,
         "qc_warning_count": qc_warning_count,
         "participant_id_corrections": config.participant_id_corrections,
